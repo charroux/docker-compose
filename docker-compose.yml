@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  rental-service:
+    build:
+      context: ./RentalService
+      dockerfile: Dockerfile
+    container_name: rental-service
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_APPLICATION_NAME=rental-service
+    restart: unless-stopped
