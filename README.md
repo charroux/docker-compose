@@ -230,6 +230,115 @@ http://localhost:8080/customer/Jean%20Dupont
 
 **Point important :** Le `rental-service` utilise `http://customer-service:8081` (nom du service) et non `http://localhost:8081` car les conteneurs communiquent via le réseau Docker interne.
 
+### Analyse du code : La méthode bonjour()
+
+Examinons le code de la méthode `bonjour()` dans `RentalController.java` :
+
+```java
+@GetMapping("/customer/{name}")
+public String bonjour(@PathVariable String name) {
+    RestTemplate restTemplate = new RestTemplate();
+    String url = customerServiceUrl + "/customers/" + name + "/address";
+    logger.info("Requesting URL: " + url);
+    String response = restTemplate.getForObject(url, String.class);
+    return response;
+}
+```
+
+**Décomposition ligne par ligne :**
+
+1. **`@GetMapping("/customer/{name}")`**
+   - Définit que cette méthode répond aux requêtes HTTP GET sur `/customer/{name}`
+   - `{name}` est une variable de chemin qui sera extraite de l'URL
+
+2. **`@PathVariable String name`**
+   - Extrait la valeur de `{name}` depuis l'URL et l'injecte dans le paramètre `name`
+   - Exemple : `/customer/Jean%20Dupont` → `name = "Jean Dupont"`
+
+3. **`RestTemplate restTemplate = new RestTemplate()`**
+   - Crée une instance de `RestTemplate`, un client HTTP fourni par Spring
+   - `RestTemplate` permet d'effectuer des requêtes HTTP vers d'autres services
+
+4. **`String url = customerServiceUrl + "/customers/" + name + "/address"`**
+   - Construit l'URL complète pour appeler le CustomerService
+   - `customerServiceUrl` est injecté depuis `application.properties` (`${customer.service.url}`)
+   - En Docker : `http://customer-service:8081/customers/Jean Dupont/address`
+   - En local : `http://localhost:8081/customers/Jean Dupont/address`
+
+5. **`restTemplate.getForObject(url, String.class)`**
+   - **Envoie une requête HTTP GET** vers l'URL construite
+   - **Premier paramètre** : L'URL cible
+   - **Deuxième paramètre** : Le type de la réponse attendue (`String.class`)
+   - `getForObject` effectue la requête de manière **synchrone** (bloquante)
+   - La méthode attend la réponse avant de continuer
+
+6. **`return response`**
+   - Retourne la réponse reçue du CustomerService au client HTTP initial
+
+**Alternatives à RestTemplate :**
+
+`RestTemplate` est un client HTTP classique mais d'autres options existent :
+
+```java
+// Avec WebClient (réactif, recommandé pour les nouvelles applications)
+WebClient webClient = WebClient.create(customerServiceUrl);
+String response = webClient.get()
+    .uri("/customers/{name}/address", name)
+    .retrieve()
+    .bodyToMono(String.class)
+    .block();
+
+// Avec Feign (client HTTP déclaratif)
+@FeignClient(name = "customer-service", url = "${customer.service.url}")
+public interface CustomerClient {
+    @GetMapping("/customers/{name}/address")
+    String getCustomerAddress(@PathVariable String name);
+}
+```
+
+**Gestion des erreurs :**
+
+La méthode actuelle ne gère pas les erreurs. En production, il faudrait ajouter :
+
+```java
+@GetMapping("/customer/{name}")
+public String bonjour(@PathVariable String name) {
+    try {
+        RestTemplate restTemplate = new RestTemplate();
+        String url = customerServiceUrl + "/customers/" + name + "/address";
+        logger.info("Requesting URL: " + url);
+        String response = restTemplate.getForObject(url, String.class);
+        return response;
+    } catch (HttpClientErrorException e) {
+        // Erreur 4xx (client)
+        logger.error("Client error: " + e.getStatusCode());
+        return "Error: Customer not found";
+    } catch (HttpServerErrorException e) {
+        // Erreur 5xx (serveur)
+        logger.error("Server error: " + e.getStatusCode());
+        return "Error: Service unavailable";
+    } catch (ResourceAccessException e) {
+        // Problème de connexion réseau
+        logger.error("Connection error: " + e.getMessage());
+        return "Error: Cannot connect to customer service";
+    }
+}
+```
+
+**Timeout et configuration :**
+
+Par défaut, `RestTemplate` n'a pas de timeout. Il est recommandé de le configurer :
+
+```java
+@Bean
+public RestTemplate restTemplate() {
+    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+    factory.setConnectTimeout(3000);  // 3 secondes pour établir la connexion
+    factory.setReadTimeout(3000);     // 3 secondes pour lire la réponse
+    return new RestTemplate(factory);
+}
+```
+
 ---
 
 ## 🛠️ Commandes Docker Compose essentielles
