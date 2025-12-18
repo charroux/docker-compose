@@ -205,17 +205,17 @@ curl http://localhost:8081/customers/Jean%20Dupont/address
 **RentalService (port 8080) :**
 ```bash
 # Toutes les voitures
-curl http://localhost:8080/api/cars
+curl http://localhost:8080/cars
 
 # Communication inter-services : RentalService appelle CustomerService
-curl http://localhost:8080/api/cars/bonjour/Jean%20Dupont
+curl http://localhost:8080/customer/Jean%20Dupont
 ```
 
 ### Exemple de communication inter-services
 
 Lorsque vous appelez :
 ```
-http://localhost:8080/api/cars/bonjour/Jean%20Dupont
+http://localhost:8080/customer/Jean%20Dupont
 ```
 
 **Voici ce qui se passe :**
@@ -332,9 +332,9 @@ docker-compose build --no-cache
     │ RentalService    │  │ CustomerService   │
     │ (port 8080)      │  │ (port 8081)       │
     │                  │  │                   │
-    │ - Liste voitures │  │ - Liste clients   │
-    │ - Endpoint       │──┤ - Adresses        │
-    │   /bonjour/{name}│  │                   │
+    │ - GET /cars      │  │ - GET /customers  │
+    │ - GET /customer/ │──┤ - GET /customers/ │
+    │   {name}         │  │   {name}/address  │
     └──────────────────┘  └───────────────────┘
             │                      │
             └──────────┬───────────┘
