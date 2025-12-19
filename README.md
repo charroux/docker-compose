@@ -1,11 +1,12 @@
 # Projet Microservices avec Docker Compose
 
 ## Description
-Projet pédagogique illustrant l'architecture microservices avec deux services REST :
+Projet pédagogique illustrant l'architecture microservices avec deux services REST et une base de données :
 - **CustomerService** : Gestion des clients (port 8081)
 - **RentalService** : Gestion des locations de voitures (port 8080)
+- **MySQL** : Base de données pour stocker les voitures (port 3307)
 
-Ce projet démontre la communication inter-services et l'orchestration avec Docker Compose.
+Ce projet démontre la communication inter-services, la persistance des données et l'orchestration avec Docker Compose.
 
 ## Structure du projet
 ```
@@ -17,10 +18,17 @@ docker-compose/
 │   └── ...
 ├── RentalService/          # Microservice de gestion des locations
 │   ├── src/
+│   │   └── main/
+│   │       ├── java/com/rental/
+│   │       │   ├── controller/    # Contrôleurs REST
+│   │       │   ├── model/         # Entités JPA (Car)
+│   │       │   └── repository/    # Repositories Spring Data JPA
+│   │       └── resources/
+│   │           └── application.properties  # Configuration JPA/MySQL
 │   ├── build.gradle
 │   ├── Dockerfile
 │   └── ...
-└── docker-compose.yml      # Configuration d'orchestration Docker
+└── docker-compose.yml      # Configuration d'orchestration Docker + MySQL
 ```
 
 ## Prérequis
@@ -102,20 +110,28 @@ networks:
 ```
 
 **Le réseau virtuel** :
-- Crée un réseau isolé pour vos conteneurs
-- Les conteneurs peuvent se parler en utilisant leurs noms de service
-- Exemple : `rental-service` peut joindre `customer-service` via `http://customer-service:8081`
-- Le `driver: bridge` crée un réseau local sur votre machine
-
-**Schéma de communication :**
-```
-┌─────────────────────────────────────────────────────┐
-│          microservices-network (bridge)             │
-│                                                       │
-│  ┌─────────────────┐      ┌─────────────────┐      │
-│  │ customer-service│◄─────┤ rental-service  │      │
-│  │   port 8081     │      │   port 8080     │      │
-│  └────────┬────────┘      └────────┬────────┘      │
+- Crée un réseau isolé pour vos conteneurs─────────┐
+│              microservices-network (bridge)                   │
+│                                                                │
+│  ┌─────────────────┐      ┌─────────────────┐               │
+│  │ customer-service│◄─────┤ rental-service  │               │
+│  │   port 8081     │      │   port 8080     │               │
+│  └────────┬────────┘      └────────┬────────┘               │
+│           │                         │                         │
+│           │                         │                         │
+│           │               ┌─────────▼─────────┐              │
+│           │               │   rental-mysql    │              │
+│           │               │   port 3306       │              │
+│           │               │  (MySQL 8.0)      │              │
+│           │               └─────────┬─────────┘              │
+└───────────┼─────────────────────────┼────────────────────────┘
+            │                         │
+         (8081)                    (8080)
+            │                         │
+       ┌────▼─────────────────────────▼────┐
+       │   Votre machine (localhost)        │
+       │   MySQL accessible sur port 3307   │
+       └───┬────────┘      └────────┬────────┘      │
 └───────────┼──────────────────────────┼──────────────┘
             │                          │
          (8081)                     (8080)
@@ -129,14 +145,69 @@ networks:
 
 ```yaml
     depends_on:
-      - customer-service
+      rental-mysql:
+        condition: service_healthy
+      customer-service:
+        condition: service_started
 ```
 
-**Ordre de démarrage** :
-- `depends_on` garantit que `customer-service` démarre **avant** `rental-service`
-- Important car `rental-service` a besoin de communiquer avec `customer-service`
+**Ordre de démarrage et health checks** :
+- `depends_on` garantit que les dépendances démarrent **avant** le service
+- `condition: service_healthy` : attend que MySQL soit **réellement prêt** (pas juste démarré)
+- `condition: service_started` : attend simplement que le conteneur soit démarré
+- Important car `rental-service` a besoin d'une connexion MySQL fonctionnelle
 
-#### 5. Politique de redémarrage
+**Pourquoi un health check pour MySQL ?**
+
+Sans health check, Docker démarre MySQL mais le service peut ne pas être prêt à accepter des connexions. Le `rental-service` démarrerait trop tôt et crasherait en tentant de se connecter à MySQL. Le health check vérifie régulièrement que MySQL répond aux requêtes avant d'autoriser le démarrage du service dépendant.
+
+```yaml
+healthcheck:
+  test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+  interval: 10s      # Vérifie toutes les 10 secondes
+  timeout: 5s        # Timeout après 5 secondes
+  retries: 5         # 5 tentatives avant d'échouer
+  start_period: 30s  # Période de grâce au démarrage
+```
+
+#### 5. Volumes persistants
+
+```yaml
+volumes:
+  rental-mysql-data:
+    driver: local
+```
+
+```yaml
+services:
+  rental-mysql:
+    volumes:
+      - rental-mysql-data:/var/lib/mysql
+```
+
+**Pourquoi des volumes ?**
+- Par défaut, les données dans un conteneur sont **éphémères** (perdues à l'arrêt)
+- Un **volume Docker** persiste les données en dehors du conteneur
+- `/var/lib/mysql` est le répertoire où MySQL stocke ses bases de données
+- Même si vous supprimez le conteneur avec `docker-compose down`, les données restent
+- Pour tout supprimer y compris les volumes : `docker-compose down -v`
+
+**Types de montage :**
+```yaml
+# Volume nommé (géré par Docker) - RECOMMANDÉ pour les données
+volumes:
+  - rental-mysql-data:/var/lib/mysql
+
+# Bind mount (dossier local) - utile pour le développement
+volumes:
+  - ./mysql-data:/var/lib/mysql
+
+# Volume anonyme (créé automatiquement)
+volumes:
+  - /var/lib/mysql
+```
+
+#### 6. Politique de redémarrage
 
 ```yaml
     restart: unless-stopped
@@ -147,6 +218,335 @@ networks:
 - `always` : toujours redémarrer si le conteneur s'arrête
 - `on-failure` : redémarrer uniquement en cas d'erreur
 - `unless-stopped` : redémarrer sauf si vous l'arrêtez manuellement
+
+---
+
+## 🗄️ Intégration de la base de données MySQL
+
+### Pourquoi une base de données ?
+
+Dans la version initiale, `RentalService` stockait les voitures **en mémoire** (dans une `ArrayList`). Cela pose plusieurs problèmes :
+- Les données sont **perdues** à chaque redémarrage du service
+- Impossible de **partager** les données entre plusieurs instances
+- Pas de **persistance** des modifications
+
+Avec MySQL, les données sont stockées de manière **persistante** dans une base de données relationnelle.
+
+### Architecture de la persistance
+
+```
+┌─────────────────────────────────────────────┐
+│          RentalService (Spring Boot)         │
+│                                               │
+│  ┌────────────────┐      ┌────────────────┐│
+│  │ RentalController│─────►│  CarRepository ││
+│  │  (REST API)    │      │   (JPA)        ││
+│  └────────────────┘      └────────┬───────┘│
+│                                     │        │
+└─────────────────────────────────────┼────────┘
+                                      │
+                          Spring Data JPA / Hibernate
+                                      │
+                          ┌───────────▼──────────┐
+                          │   MySQL Database     │
+                          │   - Table: cars      │
+                          │   - Colonnes:        │
+                          │     * plateNumber    │
+                          │     * brand          │
+                          │     * price          │
+                          └──────────────────────┘
+```
+
+### Configuration dans docker-compose.yml
+
+#### 1. Service MySQL
+
+```yaml
+rental-mysql:
+  image: mysql:8.0                    # Image officielle MySQL version 8.0
+  container_name: rental-mysql
+  environment:
+    MYSQL_DATABASE: rentaldb          # Nom de la base à créer
+    MYSQL_USER: rental_user           # Utilisateur applicatif
+    MYSQL_PASSWORD: rental_password   # Mot de passe de l'utilisateur
+    MYSQL_ROOT_PASSWORD: root_password # Mot de passe root
+  ports:
+    - "3307:3306"                     # Port 3306 du conteneur → 3307 sur l'hôte
+  volumes:
+    - rental-mysql-data:/var/lib/mysql # Volume pour la persistance
+  networks:
+    - microservices-network
+  healthcheck:
+    test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+  restart: unless-stopped
+```
+
+**Points importants :**
+- **Port mapping** : `3307:3306`
+  - Port 3306 est le port MySQL par défaut
+  - Mappé sur 3307 sur la machine hôte pour éviter les conflits si vous avez déjà MySQL installé localement
+- **Variables d'environnement** :
+  - `MYSQL_DATABASE` : crée automatiquement la base `rentaldb` au premier démarrage
+  - `MYSQL_USER` et `MYSQL_PASSWORD` : identifiants pour l'application
+  - `MYSQL_ROOT_PASSWORD` : mot de passe administrateur
+
+⚠️ **En production**, ne mettez JAMAIS les mots de passe en dur ! Utilisez des secrets Docker ou des variables d'environnement externes.
+
+#### 2. Configuration du RentalService
+
+```yaml
+rental-service:
+  environment:
+    - SPRING_DATASOURCE_URL=jdbc:mysql://rental-mysql:3306/rentaldb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    - SPRING_DATASOURCE_USERNAME=rental_user
+    - SPRING_DATASOURCE_PASSWORD=rental_password
+    - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+  depends_on:
+    rental-mysql:
+      condition: service_healthy
+```
+
+**URL de connexion décomposée :**
+```
+jdbc:mysql://rental-mysql:3306/rentaldb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+│    │      │               │    │       └── Paramètres de connexion
+│    │      │               │    └────────── Nom de la base de données
+│    │      │               └─────────────── Port MySQL
+│    │      └─────────────────────────────── Nom du service (DNS Docker)
+│    └────────────────────────────────────── Protocole MySQL
+└─────────────────────────────────────────── Préfixe JDBC
+```
+
+**Paramètres URL :**
+- `useSSL=false` : désactive SSL (acceptable en développement sur réseau Docker interne)
+- `allowPublicKeyRetrieval=true` : nécessaire pour MySQL 8.0+
+- `serverTimezone=UTC` : définit le fuseau horaire
+
+**DDL Auto modes :**
+```yaml
+SPRING_JPA_HIBERNATE_DDL_AUTO=update  # Met à jour le schéma automatiquement
+```
+- `none` : ne fait rien (production)
+- `validate` : valide le schéma sans le modifier
+- `update` : met à jour le schéma si nécessaire (développement)
+- `create` : recrée le schéma à chaque démarrage (perte de données !)
+- `create-drop` : recrée au démarrage, supprime à l'arrêt
+
+### Côté application Spring Boot
+
+#### 1. Dépendances Gradle (`build.gradle`)
+
+```gradle
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'  // JPA/Hibernate
+    runtimeOnly 'com.mysql:mysql-connector-j'                              // Driver MySQL
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+```
+
+**Rôle de chaque dépendance :**
+- `spring-boot-starter-data-jpa` : fournit JPA, Hibernate et Spring Data
+- `mysql-connector-j` : driver JDBC pour communiquer avec MySQL
+
+#### 2. Configuration (`application.properties`)
+
+```properties
+# Configuration de la connexion MySQL
+spring.datasource.url=${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3307/rentaldb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+spring.datasource.username=${SPRING_DATASOURCE_USERNAME:rental_user}
+spring.datasource.password=${SPRING_DATASOURCE_PASSWORD:rental_password}
+spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+
+# Configuration JPA/Hibernate
+spring.jpa.hibernate.ddl-auto=${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+spring.jpa.show-sql=true                                    # Affiche les requêtes SQL
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect
+spring.jpa.properties.hibernate.format_sql=true             # Formate les requêtes SQL
+```
+
+**Valeurs par défaut :**
+- Le pattern `${VAR:default}` utilise la variable d'environnement `VAR` ou la valeur par défaut
+- En local : utilise `localhost:3307`
+- En Docker : Docker Compose injecte les bonnes variables d'environnement
+
+#### 3. Entité JPA (`Car.java`)
+
+```java
+@Entity                           // Indique que c'est une entité JPA
+@Table(name = "cars")             // Nom de la table en base
+public class Car {
+    
+    @Id                           // Clé primaire
+    private String plateNumber;   // Champ utilisé comme ID
+    
+    private String brand;         // Colonne "brand"
+    private double price;         // Colonne "price"
+    
+    // Constructeurs, getters, setters...
+}
+```
+
+**Annotations JPA :**
+- `@Entity` : déclare la classe comme entité persistante
+- `@Table(name = "cars")` : nomme la table (sinon utilise le nom de la classe)
+- `@Id` : désigne le champ comme clé primaire
+- `@GeneratedValue` : génération automatique de l'ID (non utilisé ici car plateNumber est fourni)
+
+**Mapping automatique :**
+- `plateNumber` → colonne `plate_number` (ou `plateNumber` selon la config)
+- `brand` → colonne `brand`
+- `price` → colonne `price`
+
+Si vous voulez personnaliser :
+```java
+@Column(name = "plate_number", nullable = false, unique = true)
+private String plateNumber;
+```
+
+#### 4. Repository (`CarRepository.java`)
+
+```java
+@Repository
+public interface CarRepository extends JpaRepository<Car, String> {
+    // Spring Data JPA génère automatiquement l'implémentation !
+}
+```
+
+**Méthodes automatiques disponibles :**
+```java
+carRepository.findAll()           // SELECT * FROM cars
+carRepository.findById("AA-123")  // SELECT * FROM cars WHERE plate_number = 'AA-123'
+carRepository.save(car)           // INSERT ou UPDATE
+carRepository.deleteById("AA-123") // DELETE FROM cars WHERE plate_number = 'AA-123'
+carRepository.count()             // SELECT COUNT(*) FROM cars
+```
+
+**Requêtes personnalisées :**
+```java
+public interface CarRepository extends JpaRepository<Car, String> {
+    List<Car> findByBrand(String brand);                    // WHERE brand = ?
+    List<Car> findByPriceLessThan(double price);            // WHERE price < ?
+    List<Car> findByBrandAndPriceLessThan(String brand, double price); // WHERE brand = ? AND price < ?
+    
+    @Query("SELECT c FROM Car c WHERE c.price BETWEEN :min AND :max")
+    List<Car> findByPriceRange(@Param("min") double min, @Param("max") double max);
+}
+```
+
+#### 5. Controller avec Repository (`RentalController.java`)
+
+```java
+@RestController
+public class RentalController {
+
+    private final CarRepository carRepository;
+
+    // Injection par constructeur (recommandé)
+    public RentalController(CarRepository carRepository) {
+        this.carRepository = carRepository;
+    }
+
+    // Initialisation au démarrage
+    @PostConstruct
+    public void initDatabase() {
+        if (carRepository.count() == 0) {
+            logger.info("Initializing database with cars...");
+            carRepository.save(new Car("AA-123-BB", "Renault", 45.0));
+            carRepository.save(new Car("CC-456-DD", "Peugeot", 50.0));
+            // ...
+        }
+    }
+
+    @GetMapping("/cars")
+    public List<Car> getCars() {
+        return carRepository.findAll();  // Récupère depuis la base
+    }
+}
+```
+
+**`@PostConstruct` :**
+- Méthode appelée automatiquement après l'initialisation du bean
+- Idéal pour peupler la base avec des données de test
+- Vérifie `count() == 0` pour ne pas dupliquer les données
+
+### Flux de requête complet
+
+Quand vous appelez `GET http://localhost:8080/cars` :
+
+```
+1. Client HTTP
+   ↓
+2. RentalController.getCars()
+   ↓
+3. carRepository.findAll()
+   ↓
+4. Spring Data JPA génère : SELECT * FROM cars
+   ↓
+5. Hibernate exécute la requête
+   ↓
+6. Driver MySQL envoie via JDBC : jdbc:mysql://rental-mysql:3306/rentaldb
+   ↓
+7. Réseau Docker achemine vers le conteneur rental-mysql
+   ↓
+8. MySQL exécute la requête et retourne les lignes
+   ↓
+9. Hibernate mappe les résultats vers List<Car>
+   ↓
+10. Spring sérialise en JSON
+    ↓
+11. Réponse HTTP au client
+```
+
+### Persistance des données
+
+**Test de persistance :**
+```bash
+# Démarrer les services
+docker-compose up -d
+
+# Vérifier les voitures
+curl http://localhost:8080/cars
+
+# Arrêter les conteneurs
+docker-compose down
+
+# Redémarrer
+docker-compose up -d
+
+# Les voitures sont toujours là !
+curl http://localhost:8080/cars
+```
+
+Les données survivent car le volume `rental-mysql-data` persiste même après `docker-compose down`.
+
+**Pour tout réinitialiser :**
+```bash
+docker-compose down -v  # Le -v supprime les volumes
+```
+
+### Connexion directe à MySQL
+
+Pour inspecter la base de données :
+
+```bash
+# Depuis votre machine (port 3307)
+mysql -h 127.0.0.1 -P 3307 -u rental_user -p
+# Mot de passe: rental_password
+
+# Depuis le conteneur
+docker-compose exec rental-mysql mysql -u rental_user -p
+
+# Une fois connecté
+USE rentaldb;
+SHOW TABLES;
+SELECT * FROM cars;
+DESC cars;
+```
 
 ---
 
@@ -204,11 +604,22 @@ curl http://localhost:8081/customers/Jean%20Dupont/address
 
 **RentalService (port 8080) :**
 ```bash
-# Toutes les voitures
+# Toutes les voitures (récupérées depuis MySQL)
 curl http://localhost:8080/cars
 
 # Communication inter-services : RentalService appelle CustomerService
 curl http://localhost:8080/customer/Jean%20Dupont
+```
+
+**MySQL (port 3307) :**
+```bash
+# Connexion à la base de données
+mysql -h 127.0.0.1 -P 3307 -u rental_user -p
+# Mot de passe: rental_password
+
+# Requêtes SQL
+USE rentaldb;
+SELECT * FROM cars;
 ```
 
 ### Exemple de communication inter-services
@@ -413,18 +824,62 @@ docker-compose build --no-cache
 3. Testez la résolution DNS :
    ```bash
    ping customer-service
+   ping rental-mysql
    curl http://customer-service:8081/customers
    ```
 
-### Exercice 2 : Modifier une variable d'environnement
+### Exercice 2 : Vérifier la persistance des données
+1. Démarrez les services : `docker-compose up -d`
+2. Vérifiez les voitures : `curl http://localhost:8080/cars`
+3. Arrêtez les services : `docker-compose down`
+4. Redémarrez : `docker-compose up -d`
+5. Les voitures sont toujours là ! Le volume a persisté les données.
+6. Pour tout supprimer : `docker-compose down -v`
+
+### Exercice 3 : Explorer la base de données
+1. Connectez-vous à MySQL :
+   ```bash
+   docker-compose exec rental-mysql mysql -u rental_user -p
+   # Mot de passe: rental_password
+   ```
+2. Explorez la base :
+   ```sql
+   USE rentaldb;
+   SHOW TABLES;
+   DESCRIBE cars;
+   SELECT * FROM cars;
+   SELECT brand, COUNT(*) FROM cars GROUP BY brand;
+   ```
+3. Ajoutez une voiture manuellement :
+   ```sql
+   INSERT INTO cars (plate_number, brand, price) VALUES ('KK-999-LL', 'Tesla', 120.0);
+   ```
+4. Vérifiez via l'API : `curl http://localhost:8080/cars`
+┬────────┘  └───────────────────┘
+              │
+              │ JDBC
+              │
+    ┌─────────▼──────────┐
+    │   MySQL Database   │
+    │   (port 3306)      │
+    │                    │
+    │ - Database: rentaldb │
+    │ - Table: cars      │
+    │ - Volume: persisté │
+    └────────────────────┘
+              │
+    ┌─────────▼──────────┐
+    │  Docker Network    │
+    │ microservices-net  │
+    └─c `docker-compose up` (sans -d pour voir les logs)
+2. Observez que MySQL démarre d'abord et devient "healthy"
+3. Puis rental-service démarre et se connecte à MySQL
+4. Vérifiez le statut : `docker-compose ps`
+
+### Exercice 6 : Modifier une variable d'environnement
 1. Dans `docker-compose.yml`, changez `CUSTOMER_SERVICE_URL`
 2. Redémarrez : `docker-compose up --build`
 3. Observez l'impact sur la communication
-
-### Exercice 3 : Analyser les logs
-1. Générez du trafic en appelant les endpoints
-2. Observez les logs : `docker-compose logs -f`
-3. Identifiez les requêtes entre services
 
 ---
 
@@ -452,9 +907,12 @@ docker-compose build --no-cache
               │  Docker Network   │
               │ microservices-net │
               └───────────────────┘
-```
-
----
+``` avec health checks** garantit que les dépendances sont prêtes
+5. **Les ports sont mappés** entre la machine hôte et les conteneurs
+6. **Les volumes Docker** assurent la persistance des données
+7. **Spring Data JPA** simplifie l'accès aux données avec des repositories
+8. **Hibernate** gère automatiquement le mapping objet-relationnel
+9--
 
 ## 🎓 Points clés à retenir
 
