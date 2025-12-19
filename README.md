@@ -11,24 +11,39 @@ Ce projet démontre la communication inter-services, la persistance des données
 ## Structure du projet
 ```
 docker-compose/
-├── CustomerService/         # Microservice de gestion des clients
+├── CustomerService/                    # Microservice de gestion des clients
 │   ├── src/
+│   │   └── main/
+│   │       ├── java/com/customer/
+│   │       │   ├── CustomerServiceApplication.java
+│   │       │   ├── controller/
+│   │       │   │   └── CustomerController.java
+│   │       │   └── model/
+│   │       │       └── Customer.java
+│   │       └── resources/
+│   │           └── application.properties
 │   ├── build.gradle
 │   ├── Dockerfile
 │   └── ...
-├── RentalService/          # Microservice de gestion des locations
+│
+├── RentalService/                      # Microservice de gestion des locations
 │   ├── src/
 │   │   └── main/
 │   │       ├── java/com/rental/
-│   │       │   ├── controller/    # Contrôleurs REST
-│   │       │   ├── model/         # Entités JPA (Car)
-│   │       │   └── repository/    # Repositories Spring Data JPA
+│   │       │   ├── RentalServiceApplication.java
+│   │       │   ├── controller/
+│   │       │   │   └── RentalController.java    # Contrôleurs REST
+│   │       │   ├── model/
+│   │       │   │   └── Car.java                 # Entités JPA avec @Entity
+│   │       │   └── repository/
+│   │       │       └── CarRepository.java       # Spring Data JPA Repository
 │   │       └── resources/
-│   │           └── application.properties  # Configuration JPA/MySQL
-│   ├── build.gradle
+│   │           └── application.properties       # Configuration JPA/MySQL
+│   ├── build.gradle                    # Dépendances JPA + MySQL
 │   ├── Dockerfile
 │   └── ...
-└── docker-compose.yml      # Configuration d'orchestration Docker + MySQL
+│
+└── docker-compose.yml                  # Orchestration: services + MySQL + volumes
 ```
 
 ## Prérequis
