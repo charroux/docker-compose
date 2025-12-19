@@ -156,6 +156,24 @@ networks:
        └────────────────────────────────────┘
 ```
        └─────────────────────────────────────┘
+┬────────┘  └───────────────────┘
+              │
+              │ JDBC
+              │
+    ┌─────────▼──────────┐
+    │   MySQL Database   │
+    │   (port 3306)      │
+    │                    │
+    │ - Database: rentaldb │
+    │ - Table: cars      │
+    │ - Volume: persisté │
+    └────────────────────┘
+              │
+    ┌─────────▼──────────┐
+    │  Docker Network    │
+    │ microservices-net  │
+    └─c `docker-compose up` (sans -d pour voir les logs)
+
 ```
 
 #### 4. Dépendances entre services
@@ -872,23 +890,6 @@ docker-compose build --no-cache
    INSERT INTO cars (plate_number, brand, price) VALUES ('KK-999-LL', 'Tesla', 120.0);
    ```
 4. Vérifiez via l'API : `curl http://localhost:8080/cars`
-┬────────┘  └───────────────────┘
-              │
-              │ JDBC
-              │
-    ┌─────────▼──────────┐
-    │   MySQL Database   │
-    │   (port 3306)      │
-    │                    │
-    │ - Database: rentaldb │
-    │ - Table: cars      │
-    │ - Volume: persisté │
-    └────────────────────┘
-              │
-    ┌─────────▼──────────┐
-    │  Docker Network    │
-    │ microservices-net  │
-    └─c `docker-compose up` (sans -d pour voir les logs)
 2. Observez que MySQL démarre d'abord et devient "healthy"
 3. Puis rental-service démarre et se connecte à MySQL
 4. Vérifiez le statut : `docker-compose ps`
