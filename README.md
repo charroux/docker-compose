@@ -110,7 +110,14 @@ networks:
 ```
 
 **Le réseau virtuel** :
-- Crée un réseau isolé pour vos conteneurs─────────┐
+- Crée un réseau isolé pour vos conteneurs
+- Les conteneurs peuvent se parler en utilisant leurs noms de service
+- Exemple : `rental-service` peut joindre `customer-service` via `http://customer-service:8081`
+- Le `driver: bridge` crée un réseau local sur votre machine
+
+**Schéma de communication :**
+```
+┌──────────────────────────────────────────────────────────────┐
 │              microservices-network (bridge)                   │
 │                                                                │
 │  ┌─────────────────┐      ┌─────────────────┐               │
@@ -131,13 +138,8 @@ networks:
        ┌────▼─────────────────────────▼────┐
        │   Votre machine (localhost)        │
        │   MySQL accessible sur port 3307   │
-       └───┬────────┘      └────────┬────────┘      │
-└───────────┼──────────────────────────┼──────────────┘
-            │                          │
-         (8081)                     (8080)
-            │                          │
-       ┌────▼──────────────────────────▼────┐
-       │      Votre machine (localhost)      │
+       └────────────────────────────────────┘
+```
        └─────────────────────────────────────┘
 ```
 
