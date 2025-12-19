@@ -1,6 +1,14 @@
 package com.rental.model;
 
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+
+@Entity
+@Table(name = "cars")
 public class Car {
+    
+    @Id
     private String plateNumber;
     private String brand;
     private double price;
